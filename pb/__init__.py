@@ -1,3 +1,4 @@
+import asyncio
 import warnings
 import random
 import re
@@ -61,7 +62,7 @@ async def init_run(population: Population, model: OpenAI, num_evals: int):
 
     results = []
     for prompt in prompt_list:
-        result = await generate(prompt)
+        result = await generate(prompt, "gpt-4o", temperature=0.7)
         results.append(result)
 
     end_time = time.time()
@@ -73,11 +74,11 @@ async def init_run(population: Population, model: OpenAI, num_evals: int):
     for i, result in enumerate(results):
         population.units[i].P = result
 
-    _evaluate_fitness(population, model, num_evals)
+    await _evaluate_fitness(population, model, num_evals)
 
     return population
 
-def run_for_n(n: int, population: Population, model: OpenAI, num_evals: int):
+async def run_for_n(n: int, population: Population, model: OpenAI, num_evals: int):
     """ Runs the genetic algorithm for n generations.
     """
     p = population
@@ -85,62 +86,57 @@ def run_for_n(n: int, population: Population, model: OpenAI, num_evals: int):
         print(f"================== Population {i} ================== ")
         mutate(p, model)
         print("done mutation")
-        _evaluate_fitness(p, model, num_evals)
+        await _evaluate_fitness(p, model, num_evals)
         print("done evaluation")
 
     return p
 
-def _evaluate_fitness(population: Population, model: OpenAI, num_evals: int) -> Population:
-    """ Evaluates each prompt P on a batch of Q&A samples, and populates the fitness values.
-    """
+async def _evaluate_fitness(population: Population, model: OpenAI, num_evals: int) -> Population:
+    """Evaluates each prompt P on a batch of Q&A samples, and populates the fitness values."""
     logger.info(f"Starting fitness evaluation...")
     start_time = time.time()
 
     batch = gsm8k_examples[:num_evals]  # Using fixed samples for reproducibility
     elite_fitness = -1
 
-    # 简化消息列表的构建
-    # messages_list = []
+    # 构建prompt列表
     prompt_list = []
     for unit in population.units:
         unit.fitness = 0  # Reset fitness from past run
         for example in batch:
-            # messages = [
-            #     {
-            #         "role": "user",
-            #         "content": f"{unit.P}\n{example['question']}"
-            #     }
-            # ]
-            # messages_list.append((unit, messages))
             prompt = f"{unit.P}\n{example['question']}"
             prompt_list.append((unit, prompt))
 
-    # 使用列表而不是字典来存储结果
+    # 使用异步任务列表存储结果
     results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-        future_to_unit_idx = {}  # 使用索引而不是unit对象
 
-        # for i, (unit, messages) in enumerate(messages_list):
-        for i, (unit, prompt) in enumerate(prompt_list):
-            # model.chat.completions.create,
-            future = executor.submit(
-                generate,
-                model="gpt-4o-mini",
-                prompt=prompt,
-                temperature=0,
-            )
-            future_to_unit_idx[future] = (i, unit, prompt)
+    # 创建信号量来限制并发请求数量
+    sem = asyncio.Semaphore(8)
 
-        for future in concurrent.futures.as_completed(future_to_unit_idx):
-            idx, unit, prompt = future_to_unit_idx[future]
+    async def process_prompt(i: int, unit, prompt: str):
+        async with sem:  # 使用信号量控制并发
             try:
-                result = future.result()
-                results.append((idx, unit, result))
+                result = await generate(
+                    prompt,
+                    "gpt-4o-mini",
+                    temperature=0
+                )
+                return i, unit, result
             except Exception as exc:
-                print(f"Exception: {exc}")
-                continue
+                logger.error(f"Exception processing prompt {i}: {exc}")
+                return None
 
-    # 使用列表处理结果
+    # 创建所有任务
+    tasks = [
+        process_prompt(i, unit, prompt)
+        for i, (unit, prompt) in enumerate(prompt_list)
+    ]
+
+    # 并发执行所有任务
+    completed_results = await asyncio.gather(*tasks)
+    results = [r for r in completed_results if r is not None]
+
+    # 处理结果
     current_elite = None
 
     # 将结果分配给对应的unit
@@ -149,7 +145,6 @@ def _evaluate_fitness(population: Population, model: OpenAI, num_evals: int) -> 
         if result is None:
             continue
 
-        # answer_text = response.choices[0].message.content
         answer_text = result
         valid = re.search(gsm.gsm_extract_answer(batch[example_idx]['answer']), answer_text)
 
@@ -157,7 +152,6 @@ def _evaluate_fitness(population: Population, model: OpenAI, num_evals: int) -> 
             unit.fitness += (1 / num_evals)
 
         if unit.fitness > elite_fitness:
-
             current_elite = unit.model_copy()
             elite_fitness = unit.fitness
 

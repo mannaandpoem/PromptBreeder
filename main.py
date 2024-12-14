@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from openai import OpenAI
 
 from pb import create_population, init_run, run_for_n
@@ -49,7 +51,7 @@ logger.info(f'Generating the initial prompts...')
 asyncio.run(init_run(p, client, int(args['num_evals'])))
 
 logger.info(f'Starting the genetic algorithm...')
-run_for_n(n=int(args['simulations']), population=p, model=client, num_evals=int(args['num_evals']))
+asyncio.run(run_for_n(n=int(args['simulations']), population=p, model=client, num_evals=int(args['num_evals'])))
 
 print("%"*80)
 print("done processing! final gen:")
@@ -59,3 +61,6 @@ token_tracker = get_token_tracker()
 print(f"Total cost: ${token_tracker.calculate_estimated_cost():.3f}")
 print("*"*50)
 token_tracker.print_usage_report()
+time_str = datetime.now().strftime("%Y%m%d-%H%M%S")
+file_name = f"cost/token_usage_{time_str}.json"
+token_tracker.save_to_json(file_name)

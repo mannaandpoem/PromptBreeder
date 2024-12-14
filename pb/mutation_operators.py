@@ -31,7 +31,7 @@ client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
 
 @check_tokens()
-async def generate(prompt: str, model: Optional[str] = "gpt-4o", temperature: float = 0.0) -> str:
+async def generate(prompt: str, model: str, temperature: float) -> str:
     """Helper function to generate text using OpenAI API asynchronously"""
     response = await client.chat.completions.create(
         model=model,
@@ -53,7 +53,7 @@ def zero_order_prompt_gen(unit: EvolutionUnit, problem_description: str, **kwarg
     """
     # Get the generated text from the response
     prompt = problem_description + " An ordered list of 100 hints: "
-    result = asyncio.run(generate(prompt))
+    result = asyncio.run(generate(prompt,"gpt-4o", temperature=0.7))
 
     # search for the pattern "anything after 1. and before 2."
     pattern = r"1\.(.*?)2\."
@@ -72,7 +72,7 @@ def first_order_prompt_gen(unit: EvolutionUnit, **kwargs) -> EvolutionUnit:
     Returns: 
         EvolutionUnit: the evolution unit to replace the loser unit.
     """
-    unit.P = asyncio.run(generate(unit.M + " " + unit.P))
+    unit.P = asyncio.run(generate(unit.M + " " + unit.P, "gpt-4o", temperature=0.7))
     return unit
     
 # Estimation of Distribution Mutation - there is a variation of this called EDA rank
@@ -98,7 +98,7 @@ def lineage_based_mutation(unit: EvolutionUnit, elites: List[EvolutionUnit], **k
     HEADING = "GENOTYPES FOUND IN ASCENDING ORDER OF QUALITY \n "
     # made a choice not to format it with newlines, could change later.
     ITEMS = "\n".join(["{}. {}".format(i+1, x.P) for i, x in enumerate(elites)])
-    unit.P = asyncio.run(generate(HEADING + ITEMS))
+    unit.P = asyncio.run(generate(HEADING + ITEMS, "gpt-4o", temperature=0.7))
     
     return unit
 
@@ -110,7 +110,7 @@ def zero_order_hypermutation(unit: EvolutionUnit, problem_description: str, **kw
         EvolutionUnit: the evolution unit to replace the loser unit.
     """
     RANDOM_THINKING_STYLE = random.sample(thinking_styles, 1)[0]
-    unit.M = asyncio.run(generate(problem_description + " " + RANDOM_THINKING_STYLE))
+    unit.M = asyncio.run(generate(problem_description + " " + RANDOM_THINKING_STYLE, "gpt-4o", temperature=0.7))
     return unit
 
 def first_order_hypermutation(unit: EvolutionUnit, **kwargs) -> EvolutionUnit:
@@ -122,8 +122,8 @@ def first_order_hypermutation(unit: EvolutionUnit, **kwargs) -> EvolutionUnit:
         EvolutionUnit: the evolution unit to replace the loser unit.
     """
     HYPER_MUTATION_PROMPT="Please summarize and improve the following instruction: "
-    unit.M = asyncio.run(generate(HYPER_MUTATION_PROMPT + unit.M))
-    unit.P = asyncio.run(generate(unit.M + " " + unit.P))
+    unit.M = asyncio.run(generate(HYPER_MUTATION_PROMPT + unit.M, "gpt-4o", temperature=0.7))
+    unit.P = asyncio.run(generate(unit.M + " " + unit.P, "gpt-4o", temperature=0.7))
     return unit 
 
 
@@ -141,7 +141,7 @@ def working_out_task_prompt(unit: EvolutionUnit, **kwargs) -> EvolutionUnit:
     """
     RANDOM_WORKING_OUT = random.sample(gsm8k_examples, 1)[0]
   
-    unit.P = asyncio.run(generate("I gave a friend an instruction and some advice. Here are the correct examples of his workings out " + RANDOM_WORKING_OUT['question'] +" " +  RANDOM_WORKING_OUT['answer'] + " The instruction was: "))
+    unit.P = asyncio.run(generate("I gave a friend an instruction and some advice. Here are the correct examples of his workings out " + RANDOM_WORKING_OUT['question'] +" " +  RANDOM_WORKING_OUT['answer'] + " The instruction was: ", "gpt-4o", temperature=0.7))
     return unit
 
 # Prompt crossover and context shuffling. These happen AFTER mutation operators. 
