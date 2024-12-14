@@ -1,52 +1,78 @@
+import asyncio
 import random
 import re
 import os
-from pb.types import Population, EvolutionUnit
-from typing import List
+
+from pb.llm_client import check_tokens
+from pb.pb_types import Population, EvolutionUnit
+from typing import List, Optional
 # from sentence_transformers import SentenceTransformer, util
 from pb.mutation_prompts import mutation_prompts
 from pb.thinking_styles import thinking_styles
 from pb import gsm
-from cohere import Client
-
+from openai import OpenAI, AsyncOpenAI
 from dotenv import load_dotenv
 from rich import print
 
 load_dotenv()
 
 gsm8k_examples = gsm.read_jsonl('pb/data/gsm.jsonl')
+# gsm8k_examples = gsm.read_jsonl('./data/gsm.jsonl')
 
+# Initialize OpenAI client
+base_url= "https://oneapi.deepwisdom.ai/v1"  # or forward url / other llm url
+api_key= "sk-itOqZJVK9kQlVJ8kCbCa026154Bc431fAc0a726616E9B614"
+
+# client = OpenAI(api_key=api_key, base_url=base_url)
+client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 # need below for estimation_distribution_mutation, not currently using.
 # model = SentenceTransformer('multi-qa-distilbert-cos-v1')
-# print(model) 
+# print(model)
+
+
+@check_tokens()
+async def generate(prompt: str, model: Optional[str] = "gpt-4o", temperature: float = 0.0) -> str:
+    """Helper function to generate text using OpenAI API asynchronously"""
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "user", "content": prompt}
+        ],
+        temperature=temperature
+    )
+    return response.choices[0].message.content
+
 
 # Direct Mutation mutators
-def zero_order_prompt_gen(unit: EvolutionUnit, problem_description: str, model: Client, **kwargs) -> EvolutionUnit:
-    """Generates a new task-prompt P by concatenating the problem description D with the prompt 
+def zero_order_prompt_gen(unit: EvolutionUnit, problem_description: str, **kwargs) -> EvolutionUnit:
+    """Generates a new task-prompt P by concatenating the problem description D with the prompt
     'a list of 100 hints:'. New task-prompt P is the first generated hint.
-    
-    Returns: 
+
+    Returns:
         EvolutionUnit: the evolution unit to replace the loser unit.
     """
-    result = model.generate(problem_description + " An ordered list of 100 hints: ")
+    # Get the generated text from the response
+    prompt = problem_description + " An ordered list of 100 hints: "
+    result = asyncio.run(generate(prompt))
+
     # search for the pattern "anything after 1. and before 2."
     pattern = r"1\.(.*?)2\."
-    match = re.search(pattern, result[0].text, re.DOTALL)
-    if match: 
+    match = re.search(pattern, result, re.DOTALL)
+    if match:
         # return the first match
         unit.P = match.group(1).strip()
     else: 
         unit.P = ""
-    
-    return unit 
 
-def first_order_prompt_gen(unit: EvolutionUnit, model: Client, **kwargs) -> EvolutionUnit:
+    return unit
+
+def first_order_prompt_gen(unit: EvolutionUnit, **kwargs) -> EvolutionUnit:
     """Concatenate the mutation prompt M to the parent task-prompt P and pass it to the LLM to produce P'
     
     Returns: 
         EvolutionUnit: the evolution unit to replace the loser unit.
     """
-    unit.P = model.generate(unit.M + " " + unit.P)[0].text
+    unit.P = asyncio.run(generate(unit.M + " " + unit.P))
     return unit
     
 # Estimation of Distribution Mutation - there is a variation of this called EDA rank
@@ -63,7 +89,7 @@ def estimation_distribution_mutation(unit: EvolutionUnit, population_units: List
         EvolutionUnit: the evolution unit to replace the loser unit.
     """
     pass
-def lineage_based_mutation(unit: EvolutionUnit, elites: List[EvolutionUnit], model: Client, **kwargs) -> EvolutionUnit:
+def lineage_based_mutation(unit: EvolutionUnit, elites: List[EvolutionUnit], **kwargs) -> EvolutionUnit:
     """Using the stored history of best units, provide the LLM this list in chronological order to produce a novel prompt as continuation.
     
     Returns: 
@@ -72,22 +98,22 @@ def lineage_based_mutation(unit: EvolutionUnit, elites: List[EvolutionUnit], mod
     HEADING = "GENOTYPES FOUND IN ASCENDING ORDER OF QUALITY \n "
     # made a choice not to format it with newlines, could change later.
     ITEMS = "\n".join(["{}. {}".format(i+1, x.P) for i, x in enumerate(elites)])
-    unit.P = model.generate(HEADING + ITEMS)[0].text
+    unit.P = asyncio.run(generate(HEADING + ITEMS))
     
     return unit
 
 # Hypermutation
-def zero_order_hypermutation(unit: EvolutionUnit, problem_description: str, model: Client, **kwargs) -> EvolutionUnit:
+def zero_order_hypermutation(unit: EvolutionUnit, problem_description: str, **kwargs) -> EvolutionUnit:
     """ Concatenate the original problem_description to a randomly sampled thinking-style and feed it to the LLM to generate a new mutation-prompt.
     
     Returns: 
         EvolutionUnit: the evolution unit to replace the loser unit.
     """
     RANDOM_THINKING_STYLE = random.sample(thinking_styles, 1)[0]
-    unit.M = model.generate(problem_description + " " + RANDOM_THINKING_STYLE)[0].text
+    unit.M = asyncio.run(generate(problem_description + " " + RANDOM_THINKING_STYLE))
     return unit
 
-def first_order_hypermutation(unit: EvolutionUnit, model: Client, **kwargs) -> EvolutionUnit:
+def first_order_hypermutation(unit: EvolutionUnit, **kwargs) -> EvolutionUnit:
     """ Concatenate the hyper-mutation prompt "Please summarize and improve the following instruction:"
     to a mutation-prompt to that the LLM generates a new mutation-prompt. This new mutation-prompt is then 
     instantly applied to the task-prompt of that unit.
@@ -96,13 +122,13 @@ def first_order_hypermutation(unit: EvolutionUnit, model: Client, **kwargs) -> E
         EvolutionUnit: the evolution unit to replace the loser unit.
     """
     HYPER_MUTATION_PROMPT="Please summarize and improve the following instruction: "
-    unit.M = model.generate(HYPER_MUTATION_PROMPT + unit.M)[0].text
-    unit.P = model.generate(unit.M + " " + unit.P)[0].text
+    unit.M = asyncio.run(generate(HYPER_MUTATION_PROMPT + unit.M))
+    unit.P = asyncio.run(generate(unit.M + " " + unit.P))
     return unit 
 
 
 # Lamarckian Mutation
-def working_out_task_prompt(unit: EvolutionUnit, model: Client, **kwargs) -> EvolutionUnit:
+def working_out_task_prompt(unit: EvolutionUnit, **kwargs) -> EvolutionUnit:
     """ A 'lamarckian' mutation operator similar to instruction induction in APE.
 
     As far as I can understand, give it both the Q and A from the gsm8k dataset, 
@@ -115,8 +141,8 @@ def working_out_task_prompt(unit: EvolutionUnit, model: Client, **kwargs) -> Evo
     """
     RANDOM_WORKING_OUT = random.sample(gsm8k_examples, 1)[0]
   
-    unit.P = model.generate("I gave a friend an instruction and some advice. Here are the correct examples of his workings out " + RANDOM_WORKING_OUT['question'] +" " +  RANDOM_WORKING_OUT['answer'] + " The instruction was: ")[0].text
-    return unit 
+    unit.P = asyncio.run(generate("I gave a friend an instruction and some advice. Here are the correct examples of his workings out " + RANDOM_WORKING_OUT['question'] +" " +  RANDOM_WORKING_OUT['answer'] + " The instruction was: "))
+    return unit
 
 # Prompt crossover and context shuffling. These happen AFTER mutation operators. 
 def prompt_crossover(**kwargs):
@@ -149,7 +175,7 @@ POST_MUTATORS = [
     context_shuffling
 ]
 
-def mutate(population: Population, model: Client) -> Population:
+def mutate(population: Population, model=None) -> Population:
     """Select and apply a random mutator"""
     # steps
     # 1. parse through the population, grouping each evo unit by 2
@@ -188,7 +214,6 @@ def mutate(population: Population, model: Client) -> Population:
 
         data = {
             'unit' : mutation_input,
-            'model' : model,
             'elites' : population.elites,
             'problem_description': population.problem_description,
         }

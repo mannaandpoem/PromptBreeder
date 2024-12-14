@@ -8,11 +8,11 @@ from typing import List
 
 from rich import print
 import time
-from cohere import Client
+from openai import OpenAI
 
-from pb.mutation_operators import mutate
+from pb.mutation_operators import mutate, generate
 from pb import gsm
-from pb.types import EvolutionUnit, Population
+from pb.pb_types import EvolutionUnit, Population
 
 logger = logging.getLogger(__name__)
 
@@ -41,42 +41,47 @@ def create_population(tp_set: List, mutator_set: List, problem_description: str)
 
     return Population(**data)
 
-def init_run(population: Population, model: Client, num_evals: int):
-    """ The first run of the population that consumes the prompt_description and 
+async def init_run(population: Population, model: OpenAI, num_evals: int):
+    """ The first run of the population that consumes the prompt_description and
     creates the first prompt_tasks.
-    
+
     Args:
         population (Population): A population created by `create_population`.
+        model (OpenAI): OpenAI client instance
+        num_evals (int): Number of evaluations to perform
     """
 
     start_time = time.time()
+    messages_list = []
 
-    prompts = []
+    prompt_list = []
+    for unit in population.units:
+        prompt = f"{unit.T} {unit.M} INSTRUCTION: {population.problem_description} INSTRUCTION MUTANT = "
+        prompt_list.append(prompt)
 
-    for unit in population.units:    
-        template= f"{unit.T} {unit.M} INSTRUCTION: {population.problem_description} INSTRUCTION MUTANT = "
-        prompts.append(template)
-    
- 
-    results = model.batch_generate(prompts)
+    results = []
+    for prompt in prompt_list:
+        result = await generate(prompt)
+        results.append(result)
 
     end_time = time.time()
 
     logger.info(f"Prompt initialization done. {end_time - start_time}s")
 
-    assert len(results) == population.size, "size of google response to population is mismatched"
-    for i, item in enumerate(results):
-        population.units[i].P = item[0].text
+    assert len(results) == population.size, "size of OpenAI response to population is mismatched"
+
+    for i, result in enumerate(results):
+        population.units[i].P = result
 
     _evaluate_fitness(population, model, num_evals)
-    
+
     return population
 
-def run_for_n(n: int, population: Population, model: Client, num_evals: int):
+def run_for_n(n: int, population: Population, model: OpenAI, num_evals: int):
     """ Runs the genetic algorithm for n generations.
-    """     
+    """
     p = population
-    for i in range(n):  
+    for i in range(n):
         print(f"================== Population {i} ================== ")
         mutate(p, model)
         print("done mutation")
@@ -85,55 +90,77 @@ def run_for_n(n: int, population: Population, model: Client, num_evals: int):
 
     return p
 
-def _evaluate_fitness(population: Population, model: Client, num_evals: int) -> Population:
+def _evaluate_fitness(population: Population, model: OpenAI, num_evals: int) -> Population:
     """ Evaluates each prompt P on a batch of Q&A samples, and populates the fitness values.
     """
-    # need to query each prompt, and extract the answer. hardcoded 4 examples for now.
-    
     logger.info(f"Starting fitness evaluation...")
     start_time = time.time()
 
-    #batch = random.sample(gsm8k_examples, num_evals)
-    # instead of random, its better for reproducibility 
-    batch = gsm8k_examples[:num_evals]
-
+    batch = gsm8k_examples[:num_evals]  # Using fixed samples for reproducibility
     elite_fitness = -1
-    examples = []
-    for unit in population.units:
-        # set the fitness to zero from past run.
-        unit.fitness = 0
-        # todo. model.batch this or multithread
-        examples.append([unit.P + ' \n' + example['question'] for example in batch])
 
+    # 简化消息列表的构建
+    # messages_list = []
+    prompt_list = []
+    for unit in population.units:
+        unit.fitness = 0  # Reset fitness from past run
+        for example in batch:
+            # messages = [
+            #     {
+            #         "role": "user",
+            #         "content": f"{unit.P}\n{example['question']}"
+            #     }
+            # ]
+            # messages_list.append((unit, messages))
+            prompt = f"{unit.P}\n{example['question']}"
+            prompt_list.append((unit, prompt))
+
+    # 使用列表而不是字典来存储结果
     results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(examples)) as executor:
-        future_to_fit = {executor.submit(model.batch_generate, example_batch,  temperature=0): example_batch for example_batch in examples}
-        for future in concurrent.futures.as_completed(future_to_fit):
-            example_batch = future_to_fit[future]  # Get the prompt corresponding to this future
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        future_to_unit_idx = {}  # 使用索引而不是unit对象
+
+        # for i, (unit, messages) in enumerate(messages_list):
+        for i, (unit, prompt) in enumerate(prompt_list):
+            # model.chat.completions.create,
+            future = executor.submit(
+                generate,
+                model="gpt-4o-mini",
+                prompt=prompt,
+                temperature=0,
+            )
+            future_to_unit_idx[future] = (i, unit, prompt)
+
+        for future in concurrent.futures.as_completed(future_to_unit_idx):
+            idx, unit, prompt = future_to_unit_idx[future]
             try:
-                data = future.result()
-                results.append(data)
+                result = future.result()
+                results.append((idx, unit, result))
             except Exception as exc:
                 print(f"Exception: {exc}")
+                continue
 
+    # 使用列表处理结果
+    current_elite = None
 
-    # https://arxiv.org/pdf/2309.16797.pdf#page=5, P is a task-prompt to condition 
-    # the LLM before further input Q.
-    for unit_index, fitness_results in enumerate(results):
-        for i, x in enumerate(fitness_results):
-            valid = re.search(gsm.gsm_extract_answer(batch[i]['answer']), x[0].text)
-            if valid:
-                # 0.25 = 1 / 4 examples
-                population.units[unit_index].fitness += (1 / num_evals)
+    # 将结果分配给对应的unit
+    for idx, unit, result in results:
+        example_idx = idx % num_evals  # 计算这个响应对应哪个例子
+        if result is None:
+            continue
 
-            if unit.fitness > elite_fitness:
-                # I am copying this bc I don't know how it might get manipulated by future mutations.
+        # answer_text = response.choices[0].message.content
+        answer_text = result
+        valid = re.search(gsm.gsm_extract_answer(batch[example_idx]['answer']), answer_text)
 
-                unit = population.units[unit_index]
-                
-                current_elite = unit.model_copy()
-                elite_fitness = unit.fitness
-    
+        if valid:
+            unit.fitness += (1 / num_evals)
+
+        if unit.fitness > elite_fitness:
+
+            current_elite = unit.model_copy()
+            elite_fitness = unit.fitness
+
     # append best unit of generation to the elites list.
     population.elites.append(current_elite)
     end_time = time.time()
