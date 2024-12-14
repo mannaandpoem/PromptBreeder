@@ -74,7 +74,7 @@ async def init_run(population: Population, model: OpenAI, num_evals: int):
     for i, result in enumerate(results):
         population.units[i].P = result
 
-    await _evaluate_fitness(population, model, num_evals)
+    await _evaluate_fitness(population, num_evals)
 
     return population
 
@@ -84,14 +84,14 @@ async def run_for_n(n: int, population: Population, model: OpenAI, num_evals: in
     p = population
     for i in range(n):
         print(f"================== Population {i} ================== ")
-        mutate(p, model)
+        await mutate(p)
         print("done mutation")
-        await _evaluate_fitness(p, model, num_evals)
+        await _evaluate_fitness(p, num_evals)
         print("done evaluation")
 
     return p
 
-async def _evaluate_fitness(population: Population, model: OpenAI, num_evals: int) -> Population:
+async def _evaluate_fitness(population: Population, num_evals: int) -> Population:
     """Evaluates each prompt P on a batch of Q&A samples, and populates the fitness values."""
     logger.info(f"Starting fitness evaluation...")
     start_time = time.time()
@@ -106,9 +106,6 @@ async def _evaluate_fitness(population: Population, model: OpenAI, num_evals: in
         for example in batch:
             prompt = f"{unit.P}\n{example['question']}"
             prompt_list.append((unit, prompt))
-
-    # 使用异步任务列表存储结果
-    results = []
 
     # 创建信号量来限制并发请求数量
     sem = asyncio.Semaphore(8)
