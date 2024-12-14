@@ -9,14 +9,14 @@ from typing import List, Optional
 # from sentence_transformers import SentenceTransformer, util
 from pb.mutation_prompts import mutation_prompts
 from pb.thinking_styles import thinking_styles
-from pb import gsm
+from pb import hotpotqa
 from openai import OpenAI, AsyncOpenAI
 from dotenv import load_dotenv
 from rich import print
 
 load_dotenv()
 
-gsm8k_examples = gsm.read_jsonl('pb/data/gsm.jsonl')
+hotpotqa_examples = hotpotqa.read_jsonl('pb/data/hotpotqa_validate.jsonl')
 
 # Initialize OpenAI client
 base_url= "https://oneapi.deepwisdom.ai/v1"  # or forward url / other llm url
@@ -138,8 +138,7 @@ async def working_out_task_prompt(unit: EvolutionUnit, **kwargs) -> EvolutionUni
     Returns: 
         EvolutionUnit: the evolution unit to replace the loser unit.
     """
-    RANDOM_WORKING_OUT = random.sample(gsm8k_examples, 1)[0]
-  
+    RANDOM_WORKING_OUT = random.sample(hotpotqa_examples, 1)[0]
     unit.P = await generate("I gave a friend an instruction and some advice. Here are the correct examples of his workings out " + RANDOM_WORKING_OUT['question'] +" " +  RANDOM_WORKING_OUT['answer'] + " The instruction was: ", "gpt-4o", temperature=0.7)
     return unit
 
@@ -202,7 +201,7 @@ async def mutate(population: Population) -> Population:
 
         # determine which unit has the higher fitness. Since I am currently testing and want to preserve the # of calls I am making to the LLM, there 
         # is a decent chance that I will hit equal fitness levels. in that case, first unit wins and second unit loses.
-        
+
         # TODO: clean this up
         FIRST_WON = False
         if first_unit.fitness >=  second_unit.fitness:

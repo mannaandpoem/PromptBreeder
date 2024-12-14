@@ -24,11 +24,12 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=lo
 logger = logging.getLogger(__name__)
 
 parser = argparse.ArgumentParser(description='Run the PromptBreeder Algorithm. Number of units is mp * ts.')
-parser.add_argument('-mp', '--num_mutation_prompts', default=2)     
-parser.add_argument('-ts', '--num_thinking_styles', default=4)     
-parser.add_argument('-e', '--num_evals', default=10)     
-parser.add_argument('-n', '--simulations', default=10)     
-parser.add_argument('-p', '--problem', default="Solve the math word problem, giving your answer as an arabic numeral.")       
+parser.add_argument('-mp', '--num_mutation_prompts', default=5)
+parser.add_argument('-ts', '--num_thinking_styles', default=5)
+parser.add_argument('-e', '--num_evals', default=50)
+parser.add_argument('-n', '--simulations', default=20)
+# parser.add_argument('-p', '--problem', default="Solve the math word problem, giving your answer as an arabic numeral.")
+parser.add_argument('-p', '--problem', default="Answer the given question by finding and connecting relevant information across multiple provided paragraphs of text.")
 
 args = vars(parser.parse_args())
 
@@ -42,7 +43,7 @@ api_key= "sk-itOqZJVK9kQlVJ8kCbCa026154Bc431fAc0a726616E9B614"
 client = OpenAI(api_key=api_key, base_url=base_url)
 
 
-def save_population_units(population: Population, base_dir: str = "population_results") -> str:
+def save_population_units(population: Population, base_dir: str = "population_results", timestamp: str = "") -> str:
     """
     Save the population units to a JSON file with timestamp.
 
@@ -61,8 +62,9 @@ def save_population_units(population: Population, base_dir: str = "population_re
         save_dir = Path(base_dir)
         save_dir.mkdir(parents=True, exist_ok=True)
 
-        # Generate timestamp for filename
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        if not timestamp:
+            # Generate timestamp for filename
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
 
         # Create filename with metadata
         filename = f"population_units_{timestamp}.json"
@@ -129,7 +131,9 @@ async def main():
     print("%" * 80)
     print("done processing! final gen:")
     print(p.units)
-    saved_path = save_population_units(p)
+
+    time_str = datetime.now().strftime("%Y%m%d-%H%M%S")
+    saved_path = save_population_units(p, timestamp=time_str)
     print(f"Results saved to: {saved_path}")
 
     token_tracker = get_token_tracker()
@@ -138,7 +142,6 @@ async def main():
     token_tracker.print_usage_report()
 
     # Save token usage data
-    time_str = datetime.now().strftime("%Y%m%d-%H%M%S")
     file_name = f"cost/token_usage_{time_str}.json"
     token_tracker.save_to_json(file_name)
 
