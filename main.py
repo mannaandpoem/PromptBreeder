@@ -23,13 +23,13 @@ load_dotenv() # load environment variables
 parser = argparse.ArgumentParser(description='Run the PromptBreeder Algorithm. Number of units is mp * ts.')
 parser.add_argument('-mp', '--num_mutation_prompts', default=5)
 parser.add_argument('-ts', '--num_thinking_styles', default=5)
-parser.add_argument('-e', '--num_evals', default=50)
+parser.add_argument('-e', '--num_evals', default=30)
 parser.add_argument('-n', '--simulations', default=20)
 # parser.add_argument('-p', '--problem', default="Solve the math word problem, giving your answer as an arabic numeral.")
 # parser.add_argument('-p', '--problem', default="Answer the given question by finding and connecting relevant information across multiple provided paragraphs of text.")
 # parser.add_argument('-p', '--problem', default="Answer the given question by performing numerical reasoning and calculations based on information found in the provided paragraph.")
-parser.add_argument('-p', '--problem', default="Solve the given mathematical problem using advanced techniques, providing a three-digit integer answer between 000 and 999.")
-# parser.add_argument('-p', '--problem', default="Solve the given reasoning problem, which may involve logical deduction, mathematics, coding, or abstract thinking.")
+# parser.add_argument('-p', '--problem', default="Solve the given mathematical problem using advanced techniques, providing a three-digit integer answer between 000 and 999.")
+parser.add_argument('-p', '--problem', default="Solve the given reasoning problem, which may involve logical deduction, mathematics, coding, or abstract thinking.")
 
 args = vars(parser.parse_args())
 
@@ -38,7 +38,8 @@ total_evaluations = int(args['num_mutation_prompts']) * int(args['num_thinking_s
 
 # set num_workers to total_evaluations so we always have a thread 
 base_url= "https://oneapi.deepwisdom.ai/v1"  # or forward url / other llm url
-api_key= "sk-itOqZJVK9kQlVJ8kCbCa026154Bc431fAc0a726616E9B614"
+# api_key= "sk-itOqZJVK9kQlVJ8kCbCa026154Bc431fAc0a726616E9B614"
+api_key= "sk-1xOLl6MU5lDBVu4x3eD212Ca1bDd455f8a470a11C4086925"
 
 client = OpenAI(api_key=api_key, base_url=base_url)
 

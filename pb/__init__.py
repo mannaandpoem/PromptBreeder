@@ -17,6 +17,7 @@ from openai import OpenAI
 # from pb import gsm
 from pb import drop, aime
 from pb.drop import calculate_score_drop
+from pb.bbh import calculate_score_bbh
 from pb.logger import logger
 # from pb.hotpotqa import calculate_score
 from pb.mutation_operators import mutate, generate, parallel_generate
@@ -25,7 +26,14 @@ from pb.pb_types import EvolutionUnit, Population
 # gsm8k_examples = gsm.read_jsonl('pb/data/gsm.jsonl')
 # hotpotqa_examples = hotpotqa.read_jsonl('pb/data/hotpotqa_validate.jsonl')
 # drop_examples = drop.read_jsonl('pb/data/drop_validate.jsonl')
-aime_examples = aime.read_jsonl('pb/data/aime_validate.jsonl')
+# aime_examples = aime.read_jsonl('pb/data/aime_validate.jsonl')
+
+bbh_causal_examples = bbh.read_jsonl_bbh('pb/data/bbh/causal/bbh_causal_dev.jsonl')
+# bbh_logical_examples = bbh.read_jsonl_bbh('pb/data/bbh/logical/bbh_logical_dev.jsonl')
+# bbh_movie_examples = bbh.read_jsonl_bbh('pb/data/bbh/movie/bbh_movie_dev.jsonl')
+# bbh_salient_examples = bbh.read_jsonl_bbh('pb/data/bbh/salient/bbh_salient_dev.jsonl')
+# bbh_snarks_examples = bbh.read_jsonl_bbh('pb/data/bbh/snarks/bbh_snarks_dev.jsonl')
+
 
 def save_population_units(population: Population, base_dir: str = "population_results", timestamp: str = "") -> str:
     """
@@ -160,117 +168,86 @@ async def run_for_n(n: int, population: Population, model: OpenAI, num_evals: in
     return p
 
 async def _evaluate_fitness(population: Population, num_evals: int) -> Population:
-    """
-    评估种群中每个prompt P在Q&A样本批次上的表现，并计算得分。
-
-    Args:
-        population: 包含多个单位的种群
-        num_evals: 用于评估的样本数量
-
-    Returns:
-        更新了得分的种群
-    """
     logger.info(f"Starting fitness evaluation...")
     start_time = time.time()
 
-    # 使用固定样本以保证可重现性
-    # batch = hotpotqa_examples[:num_evals]
-    # batch = drop_examples[:num_evals]
-    batch = aime_examples[:num_evals]
-    elite_fitness = -1  # 记录最优得分
+    # batch = aime_examples[:num_evals]
+    batch = bbh_causal_examples[:num_evals]
+    elite_fitness = -1
 
-    # 构建prompt列表和对应的答案列表
     prompt_list = []
     answer_list = []
-    for unit in population.units:
-        unit.fitness = 0  # 重置上一轮的得分
+    unit_map = {}  # 添加映射以跟踪unit
+
+    for i, unit in enumerate(population.units):
+        unit.fitness = 0
+        unit_map[i] = unit
         for example in batch:
-            # 将单位的prompt与问题组合
             prompt = f"{unit.P}\n{example['question']}"
-            prompt_list.append((unit, prompt))
+            prompt += "Ensure the response concludes with the answer in the format: <answer>answer</answer>."
+            prompt_list.append((i, prompt))  # 使用unit索引而不是unit对象
             answer_list.append(example['answer'])
 
-    # 创建信号量来限制并发请求数量
-    sem = asyncio.Semaphore(5)
+    sem = asyncio.Semaphore(30)
 
-    async def process_prompt(i: int, unit, prompt: str):
-        """
-        处理单个prompt的异步函数
-
-        Args:
-            i: prompt的索引
-            unit: 对应的种群单位
-            prompt: 待处理的prompt文本
-
-        Returns:
-            元组 (索引, 单位, 生成结果) 或 None(如果发生错误)
-        """
-        async with sem:  # 使用信号量控制并发
+    async def process_prompt(i: int, prompt: str):
+        async with sem:
             try:
-                prompt += "Ensure the response concludes with the answer in the format: <answer>answer</answer>."
-                result = await generate(
-                    prompt,
-                    "gpt-4o-mini",
-                    temperature=0
-                )
-                return i, unit, result
+                result = await generate(prompt, "gpt-4o-mini", temperature=0)
+                if result:
+                    return (i, result)
+                logger.warning(f"Empty result for prompt {i}")
             except Exception as exc:
                 logger.error(f"Exception processing prompt {i}: {exc}")
-                return None
+            return None
 
-    # 创建所有异步任务
-    tasks = [
-        process_prompt(i, unit, prompt)
-        for i, (unit, prompt) in enumerate(prompt_list)
-    ]
+    tasks = [process_prompt(i, prompt) for i, prompt in prompt_list]
 
-    # 并发执行所有任务
-    completed_results = await asyncio.gather(*tasks)
-    results = [r for r in completed_results]
+    # 收集结果并过滤掉None
+    completed_results = await asyncio.gather(*tasks, return_exceptions=False)
+    valid_results = [r for r in completed_results if r is not None]
 
-    # 处理生成结果
-    current_elite = None
+    if not valid_results:
+        logger.error("No valid results obtained from evaluation")
+        return population
 
-    # 用于存储每个unit的得分和计数的列表
-    unit_scores = [0.0] * len(population.units)  # 存储每个unit的得分总和
-    unit_counts = [0] * len(population.units)  # 存储每个unit的有效样本数
+    # 初始化得分追踪
+    unit_scores = {i: 0.0 for i in unit_map.keys()}
+    unit_counts = {i: 0 for i in unit_map.keys()}
 
-    # 将结果分配给对应的unit并计算得分
-    for idx, unit, result in results:
-        if result is None:
+    # 处理有效结果
+    for idx, result in valid_results:
+        unit_idx = idx // num_evals  # 获取对应的unit索引
+        example_idx = idx % num_evals
+
+        if unit_idx not in unit_map:
+            logger.error(f"Invalid unit index: {unit_idx}")
             continue
-
-        # 计算unit在population中的索引
-        unit_idx = population.units.index(unit)
-        example_idx = idx % num_evals  # 计算这个响应对应哪个例子
 
         answer_text = result
         expected_output = answer_list[example_idx]
-        # 计算当前答案的得分
-        # current_score, extracted_output = calculate_score(expected_output, answer_text)
-        current_score, extracted_output = calculate_score_drop(expected_output, answer_text)
+        # current_score, extracted_output = calculate_score_drop(expected_output, answer_text)
+        current_score, extracted_output = calculate_score_bbh(expected_output, answer_text)
 
-        # 累计每个unit的得分和样本数
         unit_scores[unit_idx] += current_score
         unit_counts[unit_idx] += 1
 
-        # 记录详细的评估信息
         logger.warning(f"Question: {batch[example_idx]['question']}")
         logger.warning(f"Prediction: {answer_text}")
         logger.warning(f"Expected: {expected_output}")
         logger.warning(f"Score: {current_score}")
 
-    # 计算每个unit的平均得分
-    for i, unit in enumerate(population.units):
-        if unit_counts[i] > 0:  # 确保有有效样本
-            unit.fitness = unit_scores[i] / unit_counts[i]
-            # 更新精英个体
+    # 计算最终得分
+    current_elite = None
+    for unit_idx, unit in unit_map.items():
+        if unit_counts[unit_idx] > 0:
+            unit.fitness = unit_scores[unit_idx] / unit_counts[unit_idx]
             if unit.fitness > elite_fitness:
                 current_elite = unit.model_copy()
                 elite_fitness = unit.fitness
 
-    # 将当代最优个体添加到精英列表中
-    population.elites.append(current_elite)
+    if current_elite:
+        population.elites.append(current_elite)
 
     end_time = time.time()
     logger.info(f"Done fitness evaluation. {end_time - start_time}s")

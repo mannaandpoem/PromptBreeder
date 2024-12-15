@@ -9,20 +9,30 @@ from typing import List, Optional
 # from sentence_transformers import SentenceTransformer, util
 from pb.mutation_prompts import mutation_prompts
 from pb.thinking_styles import thinking_styles
-from pb import hotpotqa, drop, aime
+from pb import hotpotqa, drop, aime, bbh
 from openai import OpenAI, AsyncOpenAI
 from dotenv import load_dotenv
 from rich import print
 
 load_dotenv()
 
+bbh_causal_examples = bbh.read_jsonl_bbh('pb/data/bbh/causal/bbh_causal_dev.jsonl')
+# bbh_logical_examples = bbh.read_jsonl_bbh('pb/data/bbh/logical/bbh_logical_dev.jsonl')
+# bbh_movie_examples = bbh.read_jsonl_bbh('pb/data/bbh/movie/bbh_movie_dev.jsonl')
+# bbh_salient_examples = bbh.read_jsonl_bbh('pb/data/bbh/salient/bbh_salient_dev.jsonl')
+# bbh_snarks_examples = bbh.read_jsonl_bbh('pb/data/bbh/snarks/bbh_snarks_dev.jsonl')
+
+
+RANDOM_WORKING_OUT = random.sample(bbh_causal_examples, 1)[0]
+
 # hotpotqa_examples = hotpotqa.read_jsonl('pb/data/hotpotqa_validate.jsonl')
 # drop_examples = drop.read_jsonl('pb/data/drop_validate.jsonl')
-aime_examples = aime.read_jsonl('pb/data/aime_validate.jsonl')
+# aime_examples = aime.read_jsonl('pb/data/aime_validate.jsonl')
 
 # Initialize OpenAI client
 base_url= "https://oneapi.deepwisdom.ai/v1"  # or forward url / other llm url
-api_key= "sk-itOqZJVK9kQlVJ8kCbCa026154Bc431fAc0a726616E9B614"
+# api_key= "sk-itOqZJVK9kQlVJ8kCbCa026154Bc431fAc0a726616E9B614"
+api_key= "sk-1xOLl6MU5lDBVu4x3eD212Ca1bDd455f8a470a11C4086925"
 
 # client = OpenAI(api_key=api_key, base_url=base_url)
 client = AsyncOpenAI(api_key=api_key, base_url=base_url)
@@ -171,7 +181,6 @@ async def working_out_task_prompt(unit: EvolutionUnit, **kwargs) -> EvolutionUni
     """
     # RANDOM_WORKING_OUT = random.sample(hotpotqa_examples, 1)[0]
     # RANDOM_WORKING_OUT = random.sample(drop_examples, 1)[0]
-    RANDOM_WORKING_OUT = random.sample(aime_examples, 1)[0]
     unit.P = await generate("I gave a friend an instruction and some advice. Here are the correct examples of his workings out " + RANDOM_WORKING_OUT['question'] +" " +  RANDOM_WORKING_OUT['answer'] + " The instruction was: ", "gpt-4o", temperature=0.7)
     return unit
 
