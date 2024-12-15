@@ -1,5 +1,6 @@
 import asyncio
 import json
+import traceback
 import warnings
 import random
 import re
@@ -15,7 +16,7 @@ import time
 from openai import OpenAI
 
 # from pb import gsm
-from pb import drop, aime
+from pb import drop, aime, bbh
 from pb.drop import calculate_score_drop
 from pb.bbh import calculate_score_bbh
 # from pb.logger import logger
@@ -23,6 +24,7 @@ from pb.bbh import calculate_score_bbh
 from pb.mutation_operators import mutate, generate, parallel_generate
 from pb.pb_types import EvolutionUnit, Population
 
+from benchmark.PromptBreeder.pb.token_manager import get_token_tracker
 from metagpt.logs import logger
 
 # gsm8k_examples = gsm.read_jsonl('pb/data/gsm.jsonl')
@@ -30,10 +32,10 @@ from metagpt.logs import logger
 # drop_examples = drop.read_jsonl('pb/data/drop_validate.jsonl')
 # aime_examples = aime.read_jsonl('pb/data/aime_validate.jsonl')
 
-bbh_causal_examples = bbh.read_jsonl_bbh('pb/data/bbh/causal/bbh_causal_dev.jsonl')
+# bbh_causal_examples = bbh.read_jsonl_bbh('pb/data/bbh/causal/bbh_causal_dev.jsonl')
 # bbh_logical_examples = bbh.read_jsonl_bbh('pb/data/bbh/logical/bbh_logical_dev.jsonl')
 # bbh_movie_examples = bbh.read_jsonl_bbh('pb/data/bbh/movie/bbh_movie_dev.jsonl')
-# bbh_salient_examples = bbh.read_jsonl_bbh('pb/data/bbh/salient/bbh_salient_dev.jsonl')
+bbh_salient_examples = bbh.read_jsonl_bbh('pb/data/bbh/salient/bbh_salient_dev.jsonl')
 # bbh_snarks_examples = bbh.read_jsonl_bbh('pb/data/bbh/snarks/bbh_snarks_dev.jsonl')
 
 
@@ -79,6 +81,16 @@ def save_population_units(population: Population, base_dir: str = "population_re
                     "history": unit.history
                 }
                 for unit in population.units
+            ],
+            "elites": [
+                {
+                    "thinking_style": unit.T,
+                    "mutation_prompt": unit.M,
+                    "task_prompt": unit.P,
+                    "fitness": unit.fitness,
+                    "history": unit.history
+                }
+                for unit in population.elites
             ]
         }
 
@@ -107,7 +119,7 @@ def create_population(tp_set: List, mutator_set: List, problem_description: str)
         'problem_description' : problem_description,
         'elites' : [],
         'units': [EvolutionUnit(**{
-            'T' : t, 
+            'T' : t,
             'M' : m,
             'P' : '',
             'fitness' : 0,
@@ -166,7 +178,9 @@ async def run_for_n(n: int, population: Population, num_evals: int):
         time_str = datetime.now().strftime("%Y%m%d-%H%M%S")
         saved_path = save_population_units(p, timestamp=time_str)
         print(f"Saved population units to {saved_path}")
-
+        print("*" * 50)
+        token_tracker = get_token_tracker()
+        token_tracker.print_usage_report()
     return p
 
 async def _evaluate_fitness(population: Population, num_evals: int) -> Population:
@@ -174,23 +188,26 @@ async def _evaluate_fitness(population: Population, num_evals: int) -> Populatio
     start_time = time.time()
 
     # batch = aime_examples[:num_evals]
-    batch = bbh_causal_examples[:num_evals]
+    batch = bbh_salient_examples[:num_evals]
     elite_fitness = -1
 
     prompt_list = []
     answer_list = []
-    unit_map = {}  # 添加映射以跟踪unit
+    unit_map = {}
 
-    for i, unit in enumerate(population.units):
+    # 修正prompt_list构建逻辑
+    for unit_idx, unit in enumerate(population.units):
         unit.fitness = 0
-        unit_map[i] = unit
-        for example in batch:
+        unit_map[unit_idx] = unit
+        for example_idx, example in enumerate(batch):
             prompt = f"{unit.P}\n{example['question']}"
             prompt += "Ensure the response concludes with the answer in the format: <answer>answer</answer>."
-            prompt_list.append((i, prompt))  # 使用unit索引而不是unit对象
+            # 使用复合索引确保正确映射
+            combined_idx = unit_idx * num_evals + example_idx
+            prompt_list.append((combined_idx, prompt))
             answer_list.append(example['answer'])
 
-    sem = asyncio.Semaphore(30)
+    sem = asyncio.Semaphore(50)
 
     async def process_prompt(i: int, prompt: str):
         async with sem:
@@ -201,58 +218,66 @@ async def _evaluate_fitness(population: Population, num_evals: int) -> Populatio
                 logger.warning(f"Empty result for prompt {i}")
             except Exception as exc:
                 logger.error(f"Exception processing prompt {i}: {exc}")
+                logger.error(f"Full exception: {traceback.format_exc()}")
             return None
 
     tasks = [process_prompt(i, prompt) for i, prompt in prompt_list]
 
-    # 收集结果并过滤掉None
-    completed_results = await asyncio.gather(*tasks, return_exceptions=False)
-    valid_results = [r for r in completed_results if r is not None]
+    try:
+        completed_results = await asyncio.gather(*tasks, return_exceptions=False)
+        valid_results = [r for r in completed_results if r is not None]
 
-    if not valid_results:
-        logger.error("No valid results obtained from evaluation")
+        if not valid_results:
+            logger.error("No valid results obtained from evaluation")
+            return population
+
+        unit_scores = {i: 0.0 for i in unit_map.keys()}
+        unit_counts = {i: 0 for i in unit_map.keys()}
+
+        # 处理结果时添加更多日志
+        for idx, result in valid_results:
+            unit_idx = idx // num_evals
+            example_idx = idx % num_evals
+
+            if unit_idx not in unit_map:
+                logger.error(f"Invalid unit index: {unit_idx}")
+                continue
+
+            answer_text = result
+            expected_output = answer_list[example_idx]
+            current_score, extracted_output = calculate_score_drop(expected_output, answer_text)
+
+            unit_scores[unit_idx] += current_score
+            unit_counts[unit_idx] += 1
+
+            logger.info(f"Unit {unit_idx} - Example {example_idx}")
+            logger.info(f"Question: {batch[example_idx]['question']}")
+            logger.info(f"Prediction: {answer_text}")
+            logger.info(f"Expected: {expected_output}")
+            logger.info(f"Score: {current_score}")
+            logger.info(f"Current unit counts: {unit_counts[unit_idx]}")
+
+        # 计算最终得分
+        current_elite = None
+        for unit_idx, unit in unit_map.items():
+            if unit_counts[unit_idx] > 0:
+                unit.fitness = unit_scores[unit_idx] / unit_counts[unit_idx]
+                logger.info(f"Unit {unit_idx} final fitness: {unit.fitness}")
+                if unit.fitness > elite_fitness:
+                    current_elite = unit.model_copy()
+                    elite_fitness = unit.fitness
+                    logger.info(f"New elite found: {elite_fitness}")
+
+        if current_elite:
+            population.elites.append(current_elite)
+            logger.info(f"Added elite with fitness {elite_fitness}")
+
+    except Exception as e:
+        logger.error(f"Error during evaluation: {str(e)}")
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         return population
 
-    # 初始化得分追踪
-    unit_scores = {i: 0.0 for i in unit_map.keys()}
-    unit_counts = {i: 0 for i in unit_map.keys()}
-
-    # 处理有效结果
-    for idx, result in valid_results:
-        unit_idx = idx // num_evals  # 获取对应的unit索引
-        example_idx = idx % num_evals
-
-        if unit_idx not in unit_map:
-            logger.error(f"Invalid unit index: {unit_idx}")
-            continue
-
-        answer_text = result
-        expected_output = answer_list[example_idx]
-        # current_score, extracted_output = calculate_score_drop(expected_output, answer_text)
-        current_score, extracted_output = calculate_score_bbh(expected_output, answer_text)
-
-        unit_scores[unit_idx] += current_score
-        unit_counts[unit_idx] += 1
-
-        logger.warning(f"Question: {batch[example_idx]['question']}")
-        logger.warning(f"Prediction: {answer_text}")
-        logger.warning(f"Expected: {expected_output}")
-        logger.warning(f"Score: {current_score}")
-
-    # 计算最终得分
-    current_elite = None
-    for unit_idx, unit in unit_map.items():
-        if unit_counts[unit_idx] > 0:
-            unit.fitness = unit_scores[unit_idx] / unit_counts[unit_idx]
-            if unit.fitness > elite_fitness:
-                current_elite = unit.model_copy()
-                elite_fitness = unit.fitness
-
-    if current_elite:
-        population.elites.append(current_elite)
-
-    logger.info(f"Avg fitness: {elite_fitness}")
     end_time = time.time()
-    logger.info(f"Done fitness evaluation. {end_time - start_time}s")
+    logger.info(f"Done fitness evaluation. Time taken: {end_time - start_time}s")
 
     return population

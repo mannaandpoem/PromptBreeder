@@ -23,7 +23,7 @@ load_dotenv() # load environment variables
 parser = argparse.ArgumentParser(description='Run the PromptBreeder Algorithm. Number of units is mp * ts.')
 parser.add_argument('-mp', '--num_mutation_prompts', default=5)
 parser.add_argument('-ts', '--num_thinking_styles', default=5)
-parser.add_argument('-e', '--num_evals', default=30)
+parser.add_argument('-e', '--num_evals', default=20)
 parser.add_argument('-n', '--simulations', default=20)
 # parser.add_argument('-p', '--problem', default="Solve the math word problem, giving your answer as an arabic numeral.")
 # parser.add_argument('-p', '--problem', default="Answer the given question by finding and connecting relevant information across multiple provided paragraphs of text.")
