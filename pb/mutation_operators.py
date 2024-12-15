@@ -14,6 +14,8 @@ from openai import OpenAI, AsyncOpenAI
 from dotenv import load_dotenv
 from rich import print
 
+from metagpt.llm import LLM
+
 load_dotenv()
 
 bbh_causal_examples = bbh.read_jsonl_bbh('pb/data/bbh/causal/bbh_causal_dev.jsonl')
@@ -30,29 +32,34 @@ RANDOM_WORKING_OUT = random.sample(bbh_causal_examples, 1)[0]
 # aime_examples = aime.read_jsonl('pb/data/aime_validate.jsonl')
 
 # Initialize OpenAI client
-base_url= "https://oneapi.deepwisdom.ai/v1"  # or forward url / other llm url
-# api_key= "sk-itOqZJVK9kQlVJ8kCbCa026154Bc431fAc0a726616E9B614"
-api_key= "sk-1xOLl6MU5lDBVu4x3eD212Ca1bDd455f8a470a11C4086925"
-
-# client = OpenAI(api_key=api_key, base_url=base_url)
-client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+llm = LLM()
 # need below for estimation_distribution_mutation, not currently using.
 # model = SentenceTransformer('multi-qa-distilbert-cos-v1')
 # print(model)
 
-
 @check_tokens()
 async def generate(prompt: str, model: str, temperature: float) -> str:
     """Helper function to generate text using OpenAI API asynchronously"""
-    response = await client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "user", "content": prompt}
-        ],
-        temperature=temperature
-    )
-    return response.choices[0].message.content
+    llm.model = model
+    llm.config.temperature = temperature
+    response = await llm.aask(prompt)
+    return response
 
+
+
+
+# @check_tokens()
+# async def generate(prompt: str, model: str, temperature: float) -> str:
+#     """Helper function to generate text using OpenAI API asynchronously"""
+#     response = await client.chat.completions.create(
+#         model=model,
+#         messages=[
+#             {"role": "user", "content": prompt}
+#         ],
+#         temperature=temperature
+#     )
+#     return response.choices[0].message.content
+#
 
 async def parallel_generate(prompt_list: List[str], model: str = "gpt-4", temperature: float = 0.7) -> List[str]:
     """

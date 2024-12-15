@@ -18,10 +18,12 @@ from openai import OpenAI
 from pb import drop, aime
 from pb.drop import calculate_score_drop
 from pb.bbh import calculate_score_bbh
-from pb.logger import logger
+# from pb.logger import logger
 # from pb.hotpotqa import calculate_score
 from pb.mutation_operators import mutate, generate, parallel_generate
 from pb.pb_types import EvolutionUnit, Population
+
+from metagpt.logs import logger
 
 # gsm8k_examples = gsm.read_jsonl('pb/data/gsm.jsonl')
 # hotpotqa_examples = hotpotqa.read_jsonl('pb/data/hotpotqa_validate.jsonl')
@@ -115,7 +117,7 @@ def create_population(tp_set: List, mutator_set: List, problem_description: str)
 
     return Population(**data)
 
-async def init_run(population: Population, model: OpenAI, num_evals: int):
+async def init_run(population: Population, num_evals: int):
     """ The first run of the population that consumes the prompt_description and
     creates the first prompt_tasks.
 
@@ -151,7 +153,7 @@ async def init_run(population: Population, model: OpenAI, num_evals: int):
 
     return population
 
-async def run_for_n(n: int, population: Population, model: OpenAI, num_evals: int):
+async def run_for_n(n: int, population: Population, num_evals: int):
     """ Runs the genetic algorithm for n generations.
     """
     p = population
@@ -249,6 +251,7 @@ async def _evaluate_fitness(population: Population, num_evals: int) -> Populatio
     if current_elite:
         population.elites.append(current_elite)
 
+    logger.info(f"Avg fitness: {elite_fitness}")
     end_time = time.time()
     logger.info(f"Done fitness evaluation. {end_time - start_time}s")
 

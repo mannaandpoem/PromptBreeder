@@ -36,13 +36,6 @@ args = vars(parser.parse_args())
 total_evaluations = int(args['num_mutation_prompts']) * int(args['num_thinking_styles']) * int(args['num_evals'])
 # 修改后的代码
 
-# set num_workers to total_evaluations so we always have a thread 
-base_url= "https://oneapi.deepwisdom.ai/v1"  # or forward url / other llm url
-# api_key= "sk-itOqZJVK9kQlVJ8kCbCa026154Bc431fAc0a726616E9B614"
-api_key= "sk-1xOLl6MU5lDBVu4x3eD212Ca1bDd455f8a470a11C4086925"
-
-client = OpenAI(api_key=api_key, base_url=base_url)
-
 
 async def main():
     # Setup initial parameters
@@ -61,14 +54,13 @@ async def main():
 
     # Generate initial prompts
     logger.info('Generating the initial prompts...')
-    await init_run(p, client, int(args['num_evals']))
+    await init_run(p, int(args['num_evals']))
 
     # Run genetic algorithm
     logger.info('Starting the genetic algorithm...')
     await run_for_n(
         n=int(args['simulations']),
         population=p,
-        model=client,
         num_evals=int(args['num_evals'])
     )
 
