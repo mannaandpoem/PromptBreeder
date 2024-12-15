@@ -1,25 +1,87 @@
 import asyncio
+import json
 import warnings
 import random
 import re
 import logging
 import os
 import concurrent.futures
+from datetime import datetime
+from pathlib import Path
 from typing import List
 
 from rich import print
 import time
 from openai import OpenAI
 
-from pb.hotpotqa import calculate_score
-from pb.mutation_operators import mutate, generate
-from pb import gsm
+# from pb import gsm
+from pb import drop, aime
+from pb.drop import calculate_score_drop
+from pb.logger import logger
+# from pb.hotpotqa import calculate_score
+from pb.mutation_operators import mutate, generate, parallel_generate
 from pb.pb_types import EvolutionUnit, Population
 
-logger = logging.getLogger(__name__)
-
 # gsm8k_examples = gsm.read_jsonl('pb/data/gsm.jsonl')
-hotpotqa_examples = hotpotqa.read_jsonl('pb/data/hotpotqa_validate.jsonl')
+# hotpotqa_examples = hotpotqa.read_jsonl('pb/data/hotpotqa_validate.jsonl')
+# drop_examples = drop.read_jsonl('pb/data/drop_validate.jsonl')
+aime_examples = aime.read_jsonl('pb/data/aime_validate.jsonl')
+
+def save_population_units(population: Population, base_dir: str = "population_results", timestamp: str = "") -> str:
+    """
+    Save the population units to a JSON file with timestamp.
+
+    Args:
+        population: Population object containing the units to save
+        base_dir: Base directory for saving the results (default: 'results')
+
+    Returns:
+        str: Path to the saved file
+
+    Raises:
+        IOError: If there's an error creating the directory or saving the file
+    """
+    try:
+        # Create results directory if it doesn't exist
+        save_dir = Path(base_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        if not timestamp:
+            # Generate timestamp for filename
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+        # Create filename with metadata
+        filename = f"population_units_{timestamp}.json"
+        file_path = save_dir / filename
+
+        # Prepare data for saving
+        save_data = {
+            "timestamp": timestamp,
+            "population_size": population.size,
+            "population_age": population.age,
+            "problem_description": population.problem_description,
+            "units": [
+                {
+                    "thinking_style": unit.T,
+                    "mutation_prompt": unit.M,
+                    "task_prompt": unit.P,
+                    "fitness": unit.fitness,
+                    "history": unit.history
+                }
+                for unit in population.units
+            ]
+        }
+
+        # Save to file with pretty printing
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(save_data, f, indent=2, ensure_ascii=False)
+
+        logger.info(f"Successfully saved population units to {file_path}")
+        return str(file_path)
+
+    except Exception as e:
+        logger.error(f"Error saving population units: {str(e)}", exc_info=True)
+        raise
 
 
 def create_population(tp_set: List, mutator_set: List, problem_description: str) -> Population:
@@ -63,11 +125,11 @@ async def init_run(population: Population, model: OpenAI, num_evals: int):
         prompt = f"{unit.T} {unit.M} INSTRUCTION: {population.problem_description} INSTRUCTION MUTANT = "
         prompt_list.append(prompt)
 
-    results = []
-    for prompt in prompt_list:
-        result = await generate(prompt, "gpt-4o", temperature=0.7)
-        results.append(result)
-
+    # results = []
+    # for prompt in prompt_list:
+    #     result = await generate(prompt, "gpt-4o", temperature=0.7)
+    #     results.append(result)
+    results = await parallel_generate(prompt_list, model="gpt-4o", temperature=0.7)
     end_time = time.time()
 
     logger.info(f"Prompt initialization done. {end_time - start_time}s")
@@ -91,6 +153,9 @@ async def run_for_n(n: int, population: Population, model: OpenAI, num_evals: in
         print("done mutation")
         await _evaluate_fitness(p, num_evals)
         print("done evaluation")
+        time_str = datetime.now().strftime("%Y%m%d-%H%M%S")
+        saved_path = save_population_units(p, timestamp=time_str)
+        print(f"Saved population units to {saved_path}")
 
     return p
 
@@ -109,7 +174,9 @@ async def _evaluate_fitness(population: Population, num_evals: int) -> Populatio
     start_time = time.time()
 
     # 使用固定样本以保证可重现性
-    batch = hotpotqa_examples[:num_evals]
+    # batch = hotpotqa_examples[:num_evals]
+    # batch = drop_examples[:num_evals]
+    batch = aime_examples[:num_evals]
     elite_fitness = -1  # 记录最优得分
 
     # 构建prompt列表和对应的答案列表
@@ -124,7 +191,7 @@ async def _evaluate_fitness(population: Population, num_evals: int) -> Populatio
             answer_list.append(example['answer'])
 
     # 创建信号量来限制并发请求数量
-    sem = asyncio.Semaphore(8)
+    sem = asyncio.Semaphore(5)
 
     async def process_prompt(i: int, unit, prompt: str):
         """
@@ -159,7 +226,7 @@ async def _evaluate_fitness(population: Population, num_evals: int) -> Populatio
 
     # 并发执行所有任务
     completed_results = await asyncio.gather(*tasks)
-    results = [r for r in completed_results if r is not None]
+    results = [r for r in completed_results]
 
     # 处理生成结果
     current_elite = None
@@ -180,7 +247,8 @@ async def _evaluate_fitness(population: Population, num_evals: int) -> Populatio
         answer_text = result
         expected_output = answer_list[example_idx]
         # 计算当前答案的得分
-        current_score, extracted_output = calculate_score(expected_output, answer_text)
+        # current_score, extracted_output = calculate_score(expected_output, answer_text)
+        current_score, extracted_output = calculate_score_drop(expected_output, answer_text)
 
         # 累计每个unit的得分和样本数
         unit_scores[unit_idx] += current_score

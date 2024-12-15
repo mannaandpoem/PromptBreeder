@@ -4,7 +4,7 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from pb import create_population, init_run, run_for_n, Population
+from pb import create_population, init_run, run_for_n, Population, logger, save_population_units
 from pb.mutation_prompts import mutation_prompts
 from pb.thinking_styles import thinking_styles
 
@@ -20,16 +20,15 @@ from pb.token_manager import get_token_tracker
 
 load_dotenv() # load environment variables
 
-logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 parser = argparse.ArgumentParser(description='Run the PromptBreeder Algorithm. Number of units is mp * ts.')
 parser.add_argument('-mp', '--num_mutation_prompts', default=5)
 parser.add_argument('-ts', '--num_thinking_styles', default=5)
 parser.add_argument('-e', '--num_evals', default=50)
 parser.add_argument('-n', '--simulations', default=20)
 # parser.add_argument('-p', '--problem', default="Solve the math word problem, giving your answer as an arabic numeral.")
-parser.add_argument('-p', '--problem', default="Answer the given question by finding and connecting relevant information across multiple provided paragraphs of text.")
+# parser.add_argument('-p', '--problem', default="Answer the given question by finding and connecting relevant information across multiple provided paragraphs of text.")
+# parser.add_argument('-p', '--problem', default="Answer the given question by performing numerical reasoning and calculations based on information found in the provided paragraph.")
+parser.add_argument('-p', '--problem', default="Solve the given mathematical problem using advanced techniques, providing a three-digit integer answer between 000 and 999.")
 
 args = vars(parser.parse_args())
 
@@ -42,62 +41,6 @@ api_key= "sk-itOqZJVK9kQlVJ8kCbCa026154Bc431fAc0a726616E9B614"
 
 client = OpenAI(api_key=api_key, base_url=base_url)
 
-
-def save_population_units(population: Population, base_dir: str = "population_results", timestamp: str = "") -> str:
-    """
-    Save the population units to a JSON file with timestamp.
-
-    Args:
-        population: Population object containing the units to save
-        base_dir: Base directory for saving the results (default: 'results')
-
-    Returns:
-        str: Path to the saved file
-
-    Raises:
-        IOError: If there's an error creating the directory or saving the file
-    """
-    try:
-        # Create results directory if it doesn't exist
-        save_dir = Path(base_dir)
-        save_dir.mkdir(parents=True, exist_ok=True)
-
-        if not timestamp:
-            # Generate timestamp for filename
-            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-
-        # Create filename with metadata
-        filename = f"population_units_{timestamp}.json"
-        file_path = save_dir / filename
-
-        # Prepare data for saving
-        save_data = {
-            "timestamp": timestamp,
-            "population_size": population.size,
-            "population_age": population.age,
-            "problem_description": population.problem_description,
-            "units": [
-                {
-                    "thinking_style": unit.T,
-                    "mutation_prompt": unit.M,
-                    "task_prompt": unit.P,
-                    "fitness": unit.fitness,
-                    "history": unit.history
-                }
-                for unit in population.units
-            ]
-        }
-
-        # Save to file with pretty printing
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(save_data, f, indent=2, ensure_ascii=False)
-
-        logger.info(f"Successfully saved population units to {file_path}")
-        return str(file_path)
-
-    except Exception as e:
-        logger.error(f"Error saving population units: {str(e)}", exc_info=True)
-        raise
 
 async def main():
     # Setup initial parameters
@@ -147,9 +90,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Process interrupted by user")
-    except Exception as e:
-        logger.error(f"An error occurred: {str(e)}", exc_info=True)
+    asyncio.run(main())

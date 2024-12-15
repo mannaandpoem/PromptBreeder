@@ -9,14 +9,16 @@ from typing import List, Optional
 # from sentence_transformers import SentenceTransformer, util
 from pb.mutation_prompts import mutation_prompts
 from pb.thinking_styles import thinking_styles
-from pb import hotpotqa
+from pb import hotpotqa, drop, aime
 from openai import OpenAI, AsyncOpenAI
 from dotenv import load_dotenv
 from rich import print
 
 load_dotenv()
 
-hotpotqa_examples = hotpotqa.read_jsonl('pb/data/hotpotqa_validate.jsonl')
+# hotpotqa_examples = hotpotqa.read_jsonl('pb/data/hotpotqa_validate.jsonl')
+# drop_examples = drop.read_jsonl('pb/data/drop_validate.jsonl')
+aime_examples = aime.read_jsonl('pb/data/aime_validate.jsonl')
 
 # Initialize OpenAI client
 base_url= "https://oneapi.deepwisdom.ai/v1"  # or forward url / other llm url
@@ -40,6 +42,35 @@ async def generate(prompt: str, model: str, temperature: float) -> str:
         temperature=temperature
     )
     return response.choices[0].message.content
+
+
+async def parallel_generate(prompt_list: List[str], model: str = "gpt-4", temperature: float = 0.7) -> List[str]:
+    """
+    并行执行多个提示的生成任务
+
+    Args:
+        prompt_list: 提示词列表
+        model: 模型名称
+        temperature: 温度参数
+
+    Returns:
+        生成结果列表
+    """
+
+    async def generate_one(prompt: str) -> str:
+        try:
+            return await generate(prompt, model, temperature=temperature)
+        except Exception as e:
+            print(f"生成失败 - 提示词: {prompt[:50]}... 错误: {str(e)}")
+            return ""
+
+    # 使用 asyncio.gather 并行执行所有生成任务
+    results = await asyncio.gather(
+        *(generate_one(prompt) for prompt in prompt_list),
+        return_exceptions=False
+    )
+
+    return [r for r in results if r is not None]  # 过滤掉失败的结果
 
 
 # Direct Mutation mutators
@@ -138,7 +169,9 @@ async def working_out_task_prompt(unit: EvolutionUnit, **kwargs) -> EvolutionUni
     Returns: 
         EvolutionUnit: the evolution unit to replace the loser unit.
     """
-    RANDOM_WORKING_OUT = random.sample(hotpotqa_examples, 1)[0]
+    # RANDOM_WORKING_OUT = random.sample(hotpotqa_examples, 1)[0]
+    # RANDOM_WORKING_OUT = random.sample(drop_examples, 1)[0]
+    RANDOM_WORKING_OUT = random.sample(aime_examples, 1)[0]
     unit.P = await generate("I gave a friend an instruction and some advice. Here are the correct examples of his workings out " + RANDOM_WORKING_OUT['question'] +" " +  RANDOM_WORKING_OUT['answer'] + " The instruction was: ", "gpt-4o", temperature=0.7)
     return unit
 
