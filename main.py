@@ -29,6 +29,7 @@ parser.add_argument('-n', '--simulations', default=20)
 # parser.add_argument('-p', '--problem', default="Answer the given question by finding and connecting relevant information across multiple provided paragraphs of text.")
 # parser.add_argument('-p', '--problem', default="Answer the given question by performing numerical reasoning and calculations based on information found in the provided paragraph.")
 parser.add_argument('-p', '--problem', default="Solve the given mathematical problem using advanced techniques, providing a three-digit integer answer between 000 and 999.")
+# parser.add_argument('-p', '--problem', default="Solve the given reasoning problem, which may involve logical deduction, mathematics, coding, or abstract thinking.")
 
 args = vars(parser.parse_args())
 
