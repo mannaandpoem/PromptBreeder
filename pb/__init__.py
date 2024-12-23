@@ -18,25 +18,31 @@ from openai import OpenAI
 # from pb import gsm
 from pb import drop, aime, bbh
 from pb.drop import calculate_score_drop
-from pb.bbh import calculate_score_bbh
 # from pb.logger import logger
 # from pb.hotpotqa import calculate_score
 from pb.mutation_operators import mutate, generate, parallel_generate
 from pb.pb_types import EvolutionUnit, Population
 
+from benchmark.PromptBreeder.pb import hotpotqa
+from benchmark.PromptBreeder.pb.bbh import calculate_score_bbh
 from benchmark.PromptBreeder.pb.token_manager import get_token_tracker
 from metagpt.logs import logger
 
 # gsm8k_examples = gsm.read_jsonl('pb/data/gsm.jsonl')
-# hotpotqa_examples = hotpotqa.read_jsonl('pb/data/hotpotqa_validate.jsonl')
+hotpotqa_examples = hotpotqa.read_jsonl('pb/data/hotpotqa_validate.jsonl')
 # drop_examples = drop.read_jsonl('pb/data/drop_validate.jsonl')
 # aime_examples = aime.read_jsonl('pb/data/aime_validate.jsonl')
 
 # bbh_causal_examples = bbh.read_jsonl_bbh('pb/data/bbh/causal/bbh_causal_dev.jsonl')
 # bbh_logical_examples = bbh.read_jsonl_bbh('pb/data/bbh/logical/bbh_logical_dev.jsonl')
 # bbh_movie_examples = bbh.read_jsonl_bbh('pb/data/bbh/movie/bbh_movie_dev.jsonl')
-bbh_salient_examples = bbh.read_jsonl_bbh('pb/data/bbh/salient/bbh_salient_dev.jsonl')
+# bbh_salient_examples = bbh.read_jsonl_bbh('pb/data/bbh/salient/bbh_salient_dev.jsonl')
 # bbh_snarks_examples = bbh.read_jsonl_bbh('pb/data/bbh/snarks/bbh_snarks_dev.jsonl')
+
+
+# input args
+calculate_score_method = calculate_score_bbh
+examples = hotpotqa_examples
 
 
 def save_population_units(population: Population, base_dir: str = "population_results", timestamp: str = "") -> str:
@@ -188,7 +194,7 @@ async def _evaluate_fitness(population: Population, num_evals: int) -> Populatio
     start_time = time.time()
 
     # batch = aime_examples[:num_evals]
-    batch = bbh_salient_examples[:num_evals]
+    batch = examples[:num_evals]
     elite_fitness = -1
 
     prompt_list = []
@@ -245,7 +251,7 @@ async def _evaluate_fitness(population: Population, num_evals: int) -> Populatio
 
             answer_text = result
             expected_output = answer_list[example_idx]
-            current_score, extracted_output = calculate_score_drop(expected_output, answer_text)
+            current_score, extracted_output = calculate_score_method(expected_output, answer_text)
 
             unit_scores[unit_idx] += current_score
             unit_counts[unit_idx] += 1

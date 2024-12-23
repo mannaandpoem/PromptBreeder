@@ -25,11 +25,11 @@ parser.add_argument('-mp', '--num_mutation_prompts', default=5)
 parser.add_argument('-ts', '--num_thinking_styles', default=5)
 parser.add_argument('-e', '--num_evals', default=20)
 parser.add_argument('-n', '--simulations', default=20)
-# parser.add_argument('-p', '--problem', default="Solve the math word problem, giving your answer as an arabic numeral.")
+parser.add_argument('-p', '--problem', default="Solve the math word problem, giving your answer as an arabic numeral.")
 # parser.add_argument('-p', '--problem', default="Answer the given question by finding and connecting relevant information across multiple provided paragraphs of text.")
 # parser.add_argument('-p', '--problem', default="Answer the given question by performing numerical reasoning and calculations based on information found in the provided paragraph.")
 # parser.add_argument('-p', '--problem', default="Solve the given mathematical problem using advanced techniques, providing a three-digit integer answer between 000 and 999.")
-parser.add_argument('-p', '--problem', default="Solve the given reasoning problem, which may involve logical deduction, mathematics, coding, or abstract thinking.")
+# parser.add_argument('-p', '--problem', default="Solve the given reasoning problem, which may involve logical deduction, mathematics, coding, or abstract thinking.")
 
 args = vars(parser.parse_args())
 
